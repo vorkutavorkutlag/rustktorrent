@@ -1,71 +1,97 @@
-use std::{
-    io, 
-    io::prelude::*,
-    str::Chars,
-    fs::File,
-    collections::HashMap
-};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{self, Read};
 
-pub fn read_torrent(file_path: &str) -> io::Result<String> {
-    let mut file: File = File::open(file_path)?;
-    let mut byte_contents: Vec<u8> = Vec::new();
-    file.read_to_end(&mut byte_contents)?;
-    // Ok(byte_contents)
-    Ok(String::from_utf8_lossy(&byte_contents).to_string())
+#[derive(Debug)]
+pub enum Bencode {
+    Integer(i64),
+    String(Vec<u8>),
+    List(Vec<Bencode>),
+    Dictionary(HashMap<String, Bencode>),
 }
 
-pub fn bdecode(mut file_str: String) {
-    fn handle_dict<T, G>(mut file_chars: &[u8], index: i32) -> HashMap<T, G>{
-        // d<key-value-pairs>
-        // i.e. d4:spami42ee
-            
+pub fn decode_bencode(bytes: &[u8], index: &mut usize) -> Result<Bencode, String> {
+    match bytes.get(*index) {
+        Some(b'i') => decode_integer(bytes, index),
+        Some(b'l') => decode_list(bytes, index),
+        Some(b'd') => decode_dictionary(bytes, index),
+        Some(b'0'..=b'9') => decode_string(bytes, index),
+        _ => Err("Invalid bencode format".to_string()),
     }
-
-    fn handle_integer(mut file_str: String) -> (String, i32) {
-        // i<value>e
-        // i.e. i42e
-        let mut integer_str: String = String::from("0");
-        let mut part_len: usize = 0;
-        for char in file_str.chars() {
-            part_len +=1;
-            match char {
-                'i' => continue,
-                'e' => break,
-                _ => integer_str.push(char)
-            }
-        }
-        file_str = file_str[part_len..].to_string();
-        (file_str, integer_str.parse().unwrap())
-    }
-
-    fn handle_string() -> String {
-        // <len>:<string>
-        // i.e. 4:test
-        let mut string_len: String = String::from('0');
-        let mut part_len: usize = 0;
-        for char in file_str.chars() {
-            part_len +=1;
-            match char {
-                ':' => break,
-                _ => string_len.push(char)
-            }
-        
-        let mut string_len: i32 = string_len.parse().unwrap();
-        let part_string: String = String::from("");
-        for char in file_str.chars() {
-            part_string.push(char);
-            part_len +=1;
-            string_len -= 1;
-            if string_len <= 0 {break;}
-        }
-        
-        file_str = file_str[part_len..].to_string();
-        (file_str, integer_str.parse().unwrap())
-
-    }
-    fn handle_list<T>() -> Vec<T>{
-        // l<content>e
-        // i.e. l4:testi42ee
-    }
-    
 }
+
+fn decode_integer(bytes: &[u8], index: &mut usize) -> Result<Bencode, String> {
+    *index += 1; // Skip 'i'
+    let start = *index;
+    while let Some(&b) = bytes.get(*index) {
+        if b == b'e' {
+            let num_str = std::str::from_utf8(&bytes[start..*index]).map_err(|_| "Invalid UTF-8")?;
+            let num = num_str.parse::<i64>().map_err(|_| "Invalid integer")?;
+            *index += 1; // Skip 'e'
+            return Ok(Bencode::Integer(num));
+        }
+        *index += 1;
+    }
+    Err("Unterminated integer".to_string())
+}
+
+fn decode_string(bytes: &[u8], index: &mut usize) -> Result<Bencode, String> {
+    let start = *index;
+    while let Some(&b) = bytes.get(*index) {
+        if b == b':' {
+            let len_str = std::str::from_utf8(&bytes[start..*index]).map_err(|_| "Invalid UTF-8")?;
+            let len = len_str.parse::<usize>().map_err(|_| "Invalid length")?;
+            *index += 1; // Skip ':'
+            let end = *index + len;
+            if end > bytes.len() {
+                return Err("String out of bounds".to_string());
+            }
+            let string = bytes[*index..end].to_vec();
+            *index = end;
+            return Ok(Bencode::String(string));
+        }
+        *index += 1;
+    }
+    Err("Unterminated string length".to_string())
+}
+
+fn decode_list(bytes: &[u8], index: &mut usize) -> Result<Bencode, String> {
+    *index += 1; // Skip 'l'
+    let mut list = Vec::new();
+    while let Some(&b) = bytes.get(*index) {
+        if b == b'e' {
+            *index += 1; // Skip 'e'
+            return Ok(Bencode::List(list));
+        }
+        list.push(decode_bencode(bytes, index)?);
+    }
+    Err("Unterminated list".to_string())
+}
+
+fn decode_dictionary(bytes: &[u8], index: &mut usize) -> Result<Bencode, String> {
+    *index += 1; // Skip 'd'
+    let mut dict = HashMap::new();
+    while let Some(&b) = bytes.get(*index) {
+        if b == b'e' {
+            *index += 1; // Skip 'e'
+            return Ok(Bencode::Dictionary(dict));
+        }
+        if let Bencode::String(key_bytes) = decode_string(bytes, index)? {
+            let key = String::from_utf8(key_bytes).map_err(|_| "Invalid UTF-8 in key")?;
+            let value = decode_bencode(bytes, index)?;
+            dict.insert(key, value);
+        } else {
+            return Err("Dictionary key must be a string".to_string());
+        }
+    }
+    Err("Unterminated dictionary".to_string())
+}
+
+pub fn read_torrent_file(filename: &str) -> io::Result<Vec<u8>> {
+    let mut file = File::open(filename)?;
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer)?;
+    Ok(buffer)
+}
+
+
