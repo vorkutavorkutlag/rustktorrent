@@ -2,12 +2,45 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Bencode {
     Integer(i64),
     String(Vec<u8>),
     List(Vec<Bencode>),
     Dictionary(HashMap<String, Bencode>),
+}
+
+pub fn encode_bencode(bencode: &Bencode) -> Vec<u8> {
+    match bencode {
+        Bencode::Integer(i) => format!("i{}e", i).into_bytes(),
+        Bencode::String(s) => {
+            let mut result = format!("{}:", s.len()).into_bytes();
+            result.extend_from_slice(s);
+            result
+        }
+        Bencode::List(list) => {
+            let mut result = b"l".to_vec();
+            for item in list {
+                result.extend(encode_bencode(item));
+            }
+            result.push(b'e');
+            result
+        }
+        Bencode::Dictionary(dict) => {
+            let mut result = b"d".to_vec();
+            // Bencode dictionaries are sorted by key in lexicographical order
+            let mut sorted_keys: Vec<&String> = dict.keys().collect();
+            sorted_keys.sort();
+            for key in sorted_keys {
+                let key_bytes = encode_bencode(&Bencode::String(key.clone().into_bytes()));
+                let value_bytes = encode_bencode(&dict[key]);
+                result.extend(key_bytes);
+                result.extend(value_bytes);
+            }
+            result.push(b'e');
+            result
+        }
+    }
 }
 
 pub fn decode_bencode(bytes: &[u8], index: &mut usize) -> Result<Bencode, String> {
@@ -18,6 +51,10 @@ pub fn decode_bencode(bytes: &[u8], index: &mut usize) -> Result<Bencode, String
         Some(b'0'..=b'9') => decode_string(bytes, index),
         _ => Err("Invalid bencode format".to_string()),
     }
+}
+
+pub fn encode_dictionary(dict: &HashMap<String, Bencode>) -> Vec<u8> {
+    encode_bencode(&Bencode::Dictionary(dict.clone()))
 }
 
 fn decode_integer(bytes: &[u8], index: &mut usize) -> Result<Bencode, String> {

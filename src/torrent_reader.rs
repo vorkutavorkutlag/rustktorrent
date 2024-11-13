@@ -1,27 +1,74 @@
 use crate::bencode;
 use std::{collections::HashMap, process};
+use sha1::{Sha1, Digest};
 
-const SHA1_LEN: usize = 20;
 
-pub fn parse_torrent(filename: &str) {
-    // hashed info == sha1 function on bencoded info key
-    // announce list == announce key and announce-list key
-    // piece_length == piece length key of the info key
-    // size == length key of the info key or sum of all length keys in the files key in the info key
-    // num_pieces == ceiiling of size / piece_length
-    let info_hash: Vec<u8> = vec![0; SHA1_LEN];
-    
-    let torrent_hashmap = match bencode::read_torrent_file(filename) {
+pub fn parse_torrent(filename: &str) -> Result<(String, Vec<String>, i64, i64, i64), String> {
+    // Decode the torrent file into a HashMap
+    let torrent = match bencode::read_torrent_file(filename) {
         Ok(bytes) => {
-
-
             let mut index = 0;
             match bencode::decode_bencode(&bytes, &mut index) {
-                Ok(decoded) => decoded,
-                Err(e) => {eprintln!("Error decoding bencode: {}", e); process::exit(1)},
+                Ok(bencode::Bencode::Dictionary(map)) => map,
+                _ => return Err("Failed to decode torrent into a dictionary".to_string()),
+            }
+        },
+        Err(e) => return Err(format!("Error reading file: {}", e)),
+    };
+
+    // Extract and hash the 'info' key
+    let info_key = torrent.get("info").ok_or("Missing 'info' key")?;
+    let info_bencoded = bencode::encode_bencode(info_key);
+    let mut hasher = Sha1::new();
+    hasher.update(&info_bencoded);
+    let hashed_info = format!("{:x}", hasher.finalize());
+
+    // Get the announce list (single announce and 'announce-list')
+    let mut announce_list = Vec::new();
+    if let Some(bencode::Bencode::String(announce)) = torrent.get("announce") {
+        announce_list.push(String::from_utf8(announce.clone()).map_err(|_| "Invalid UTF-8 in 'announce'")?);
+    }
+    if let Some(bencode::Bencode::List(ann_list)) = torrent.get("announce-list") {
+        for entry in ann_list {
+            if let bencode::Bencode::List(url_list) = entry {
+                for url in url_list {
+                    if let bencode::Bencode::String(url_bytes) = url {
+                        announce_list.push(String::from_utf8(url_bytes.clone()).map_err(|_| "Invalid UTF-8 in 'announce-list'")?);
+                    }
+                }
             }
         }
-        Err(e) => {eprintln!("Error reading file: {}", e); process::exit(1)},
+    }
+
+    // Get piece length and size
+    let info_map = match info_key {
+        bencode::Bencode::Dictionary(map) => map,
+        _ => return Err("The 'info' key is not a dictionary".to_string()),
     };
-    
+    let piece_length = match info_map.get("piece length") {
+        Some(bencode::Bencode::Integer(len)) => *len,
+        _ => return Err("Missing or invalid 'piece length'".to_string()),
+    };
+
+    // Calculate size
+    let size = if let Some(bencode::Bencode::Integer(len)) = info_map.get("length") {
+        *len
+    } else if let Some(bencode::Bencode::List(files)) = info_map.get("files") {
+        let mut total_size = 0;
+        for file in files {
+            if let bencode::Bencode::Dictionary(file_map) = file {
+                if let Some(bencode::Bencode::Integer(len)) = file_map.get("length") {
+                    total_size += len;
+                }
+            }
+        }
+        total_size
+    } else {
+        return Err("Missing 'length' or 'files' in 'info'".to_string());
+    };
+
+    // Calculate num_pieces
+    let num_pieces = (size as f64 / piece_length as f64).ceil() as i64;
+
+    Ok((hashed_info, announce_list, piece_length, size, num_pieces))
 }

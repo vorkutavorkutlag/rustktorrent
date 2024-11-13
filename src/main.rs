@@ -6,16 +6,12 @@ mod torrent_reader;
 
 fn main() {
     let filename: &str = "sonic.torrent";
+    let (hashed_info, announce_list, piece_length, size, num_pieces) = match torrent_reader::parse_torrent(filename) {
+        Ok(values) => values,
+        Err(e) => {
+            eprintln!("Error parsing torrent: {}", e);
+            process::exit(1);}
+    };
+    println!("{:#?}", (hashed_info, announce_list, piece_length, size, num_pieces))
     
-    // match torrent_hashmap {
-    //     Bencode::Dictionary(ref dict) => {
-    //         for (key, value) in dict.iter() {
-    //             println!("Key: {}, Value: {:?}", key, value);
-    //         }
-    //     }
-    //     _ => {
-    //         eprintln!("Decoded data is not a dictionary");
-    //         process::exit(1);
-    //     }
-    // }
 }
