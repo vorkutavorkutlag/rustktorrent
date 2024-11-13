@@ -3,7 +3,7 @@ use std::{collections::HashMap, process};
 use sha1::{Sha1, Digest};
 
 
-pub fn parse_torrent(filename: &str) -> Result<(String, Vec<String>, i64, i64, i64), String> {
+pub fn parse_torrent(filename: &str) -> Result<(String, Vec<String>, i64, i64, i64, Vec<u8>), String> {
     // Decode the torrent file into a HashMap
     let torrent = match bencode::read_torrent_file(filename) {
         Ok(bytes) => {
@@ -40,7 +40,8 @@ pub fn parse_torrent(filename: &str) -> Result<(String, Vec<String>, i64, i64, i
         }
     }
 
-    // Get piece length and size
+
+    // Get piece length, size and pieces hash
     let info_map = match info_key {
         bencode::Bencode::Dictionary(map) => map,
         _ => return Err("The 'info' key is not a dictionary".to_string()),
@@ -48,6 +49,11 @@ pub fn parse_torrent(filename: &str) -> Result<(String, Vec<String>, i64, i64, i
     let piece_length = match info_map.get("piece length") {
         Some(bencode::Bencode::Integer(len)) => *len,
         _ => return Err("Missing or invalid 'piece length'".to_string()),
+    };
+
+    let pieces: Vec<u8> = match info_map.get("pieces") {
+        Some(bencode::Bencode::String(pieces)) => pieces.to_vec(),
+        _ => return Err("Missing or invalid 'pieces'".to_string()),
     };
 
     // Calculate size
@@ -70,5 +76,5 @@ pub fn parse_torrent(filename: &str) -> Result<(String, Vec<String>, i64, i64, i
     // Calculate num_pieces
     let num_pieces = (size as f64 / piece_length as f64).ceil() as i64;
 
-    Ok((hashed_info, announce_list, piece_length, size, num_pieces))
+    Ok((hashed_info, announce_list, piece_length, size, num_pieces, pieces))
 }
