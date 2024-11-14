@@ -1,5 +1,4 @@
 use crate::bencode;
-use std::{collections::HashMap, process};
 use sha1::{Sha1, Digest};
 
 

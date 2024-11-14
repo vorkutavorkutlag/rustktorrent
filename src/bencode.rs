@@ -53,9 +53,6 @@ pub fn decode_bencode(bytes: &[u8], index: &mut usize) -> Result<Bencode, String
     }
 }
 
-pub fn encode_dictionary(dict: &HashMap<String, Bencode>) -> Vec<u8> {
-    encode_bencode(&Bencode::Dictionary(dict.clone()))
-}
 
 fn decode_integer(bytes: &[u8], index: &mut usize) -> Result<Bencode, String> {
     *index += 1; // Skip 'i'
