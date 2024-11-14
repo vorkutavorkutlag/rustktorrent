@@ -18,6 +18,7 @@ pub fn parse_torrent(filename: &str) -> Result<(String, Vec<String>, i64, i64, i
     // Extract and hash the 'info' key
     let info_key = torrent.get("info").ok_or("Missing 'info' key")?;
     let info_bencoded = bencode::encode_bencode(info_key);
+    
     let mut hasher = Sha1::new();
     hasher.update(&info_bencoded);
     let hashed_info = format!("{:x}", hasher.finalize());

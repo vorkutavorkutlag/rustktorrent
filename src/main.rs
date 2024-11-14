@@ -1,7 +1,9 @@
 use std::{process};
 use uuid::Uuid;
+
 mod bencode;
 mod torrent_reader;
+mod tracker;
 
 fn main() {
     const VERSION: &str = "01";
@@ -26,6 +28,8 @@ fn main() {
             eprintln!("Error parsing torrent: {}", e);
             process::exit(1);}
     };
+
+    let downloaded: i64 = 0;
 
     println!("{:#?}", (infohash, announce_list, piece_length, size, num_pieces))
     
