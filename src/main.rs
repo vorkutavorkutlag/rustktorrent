@@ -5,7 +5,8 @@ mod bencode;
 mod torrent_reader;
 mod tracker;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     const VERSION: &str = "01";
     const BRAND: & str = "RK";
     let uuid = Uuid::new_v4().to_bytes_le();
@@ -30,6 +31,6 @@ fn main() {
     };
 
     let downloaded: i64 = 0;
-    tracker::start_tracker_comm(infohash, announce_list, size, session_uuid, downloaded)
+    tracker::start_tracker_comm(infohash, announce_list, size, session_uuid, downloaded).await;
     
 }

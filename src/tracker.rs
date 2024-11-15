@@ -12,7 +12,7 @@ struct Tracker {
     interval: i64,
 }
 
-async fn http_comm(tracker: Tracker) {
+async fn http_comm(tracker: Tracker) -> String {
     let client = reqwest::Client::new();
 
     for port in 6881..6889 { // bittorrent http protocol moves between these ports, should try them all
@@ -36,20 +36,20 @@ async fn http_comm(tracker: Tracker) {
             Ok(bod) => bod, 
             Err(_)=>continue};
 
-        println!("{}", body);
+        return body;
     }
-
-    
+    String::new()
 }
 
 async fn udp_comm(tracker: Tracker) {
     // socket comm
 }
 
-pub fn start_tracker_comm(infohash: Vec<u8>, announce_list: Vec<String>, size: i64, session_uuid: Vec<u8>, downloaded: i64) {
+pub async fn start_tracker_comm(infohash: Vec<u8>, announce_list: Vec<String>, size: i64, session_uuid: Vec<u8>, downloaded: i64) {
+    println!("Starting tracker comm..! {}", format!("{:#?}", announce_list));
+    let mut udp_trackers = Vec::new();
+    let mut http_trackers = Vec::new();
     
-    let mut trackers: Vec<tokio::task::JoinHandle<()>> = Vec::new();
-
     for tracker_url in announce_list {
         let tracker: Tracker = Tracker {tracker_url: tracker_url.clone(),
                                         infohash: infohash.clone(),
@@ -61,9 +61,25 @@ pub fn start_tracker_comm(infohash: Vec<u8>, announce_list: Vec<String>, size: i
 
 
         if tracker_url.starts_with("udp") {
-            trackers.push(tokio::spawn(udp_comm(tracker)))
+            udp_trackers.push(thread::spawn(move || {udp_comm(tracker)}));
         } else if tracker_url.starts_with("http") {
-            trackers.push(tokio::spawn(http_comm(tracker)))
+            http_trackers.push(thread::spawn(move || {http_comm(tracker)}));
         } else {eprintln!("Invalid announce url - Ignoring"); continue;}
     }
+
+    for tracker in http_trackers {
+        match tracker.join() { 
+            Ok(ok) => println!("{:#?}", ok.await),
+            Err(_) => println!("err")
+        }
+    }
+
+    
+    for tracker in udp_trackers {
+        match tracker.join() { 
+            Ok(_) => println!("ok"),
+            Err(_) => println!("err")
+        }
+    }
+
 }
