@@ -30,7 +30,6 @@ fn main() {
     };
 
     let downloaded: i64 = 0;
-
-    println!("{:#?}", (infohash, announce_list, piece_length, size, num_pieces))
+    tracker::start_tracker_comm(infohash, announce_list, size, session_uuid, downloaded)
     
 }
