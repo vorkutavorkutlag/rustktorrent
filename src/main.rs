@@ -16,7 +16,7 @@ async fn main() {
     session_uuid.extend_from_slice(&VERSION.as_bytes());
     session_uuid.extend_from_slice(&uuid);
 
-    let filename: &str = "sonic.torrent";
+    let filename: &str = "isaac.torrent";
     let (infohash,
          announce_list,
          piece_length,

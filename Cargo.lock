@@ -912,6 +912,7 @@ dependencies = [
 name = "rktorrent"
 version = "0.1.0"
 dependencies = [
+ "percent-encoding",
  "reqwest",
  "sha1",
  "tokio",
