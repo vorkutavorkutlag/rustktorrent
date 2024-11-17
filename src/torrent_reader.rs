@@ -1,5 +1,3 @@
-use std::io::Read;
-
 use crate::bencode;
 use sha1::{Sha1, Digest};
 

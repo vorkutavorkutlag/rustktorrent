@@ -1,4 +1,4 @@
-use std::{process};
+use std::{process, str};
 use uuid::Uuid;
 
 mod bencode;
