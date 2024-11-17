@@ -7,16 +7,17 @@ mod tracker;
 
 #[tokio::main]
 async fn main() {
-    const VERSION: &str = "01";
     const BRAND: & str = "RK";
-    let uuid = Uuid::new_v4().to_bytes_le();
+    const VERSION: &str = "01";
+    let uuid = &format!("{}", Uuid::new_v4())[..16];
+    let ip_addr = public_ip::addr().await.unwrap().to_canonical().to_string();
     
-    let mut session_uuid: Vec<u8> = Vec::new();
-    session_uuid.extend_from_slice(&BRAND.as_bytes());
-    session_uuid.extend_from_slice(&VERSION.as_bytes());
-    session_uuid.extend_from_slice(&uuid);
+    let mut session_uuid: String = String::new();
+    session_uuid.push_str(BRAND);
+    session_uuid.push_str(VERSION);
+    session_uuid.push_str(uuid);
 
-    let filename: &str = "isaac.torrent";
+    let filename: &str = "test.torrent";
     let (infohash,
          announce_list,
          piece_length,
@@ -31,6 +32,6 @@ async fn main() {
     };
 
     let downloaded: i64 = 0;
-    tracker::start_tracker_comm(infohash, announce_list, size, session_uuid, downloaded).await;
+    tracker::start_tracker_comm(infohash, announce_list, size, session_uuid, downloaded, ip_addr).await;
     
 }
