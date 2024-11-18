@@ -128,4 +128,3 @@ pub fn read_torrent_file(filename: &str) -> io::Result<Vec<u8>> {
     Ok(buffer)
 }
 
-

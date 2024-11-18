@@ -30,8 +30,8 @@ async fn main() {
             eprintln!("Error parsing torrent: {}", e);
             process::exit(1);}
     };
-
+    println!("{:#?}", &infohash);
     let downloaded: i64 = 0;
-    tracker::start_tracker_comm(infohash, announce_list, size, session_uuid, downloaded, ip_addr).await;
+    tracker::start_tracker_comm(infohash, announce_list, size, session_uuid, downloaded).await;
     
 }
