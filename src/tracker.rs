@@ -1,5 +1,7 @@
-use std::thread;
+use std::{collections::HashMap, thread};
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
+
+use crate::bencode;
 
 struct Tracker {
     tracker_url: String,
@@ -11,7 +13,7 @@ struct Tracker {
     interval: i64,
 }
 
-async fn http_comm(tracker: Tracker) -> String {
+async fn http_comm(mut tracker: Tracker) -> String {
     // Set up reqwest client
     let client = reqwest::Client::new();
     
@@ -19,20 +21,9 @@ async fn http_comm(tracker: Tracker) -> String {
     let info_hash_encoded = percent_encode(&tracker.infohash, NON_ALPHANUMERIC).to_string();
 
     for port in 6881..6889 { // bittorrent http protocol moves between these ports, should try them all
-        // let mut url = reqwest::Url::parse(&tracker.tracker_url).expect("Invalid tracker URL");
-        // url.query_pairs_mut()
-        //     .append_pair("info_hash", &info_hash_encoded)
-        //     .append_pair("peer_id", &tracker.peerid)
-        //     .append_pair("port", &port.to_string())
-        //     .append_pair("uploaded", &tracker.uploaded.to_string())
-        //     .append_pair("downloaded", &tracker.downloaded.to_string())
-        //     .append_pair("left", &(tracker.size - tracker.downloaded).to_string())
-        //     .append_pair("event", "started")
-        //     .append_pair("compact", "1");
-
         let mut url = format!("{}?info_hash={}", tracker.tracker_url, info_hash_encoded);
         url.push_str(&format!(
-            "&peer_id={}&port={}&uploaded={}&downloaded={}&left={}&event=started&compact=1",
+            "&peer_id={}&port={}&uploaded={}&downloaded={}&left={}&event=started&compact=0",
             tracker.peerid,
             port,
             tracker.uploaded,
@@ -40,26 +31,42 @@ async fn http_comm(tracker: Tracker) -> String {
             tracker.size - tracker.downloaded,
         ));
 
-
-        // return format!("{:#?}", url.to_string());
         
         let res = match client.get(url).header("User-Agent", reqwest::header::USER_AGENT).send().await {
             Ok(response) => response,
-            Err(_e) => {
-                // eprintln!("Bad response, {:#?}", e);
-                continue;
-            }
+            Err(_e) => continue
         };
         
-        let body = match res.text().await {
+        let body = match res.bytes().await {
             Ok(bod) => bod,
-            Err(e) => {
-                eprintln!("Bad body: {:#?}", e);
-                continue;
-            }
+            Err(e) => continue
         };
 
-        return body;
+        if let bencode::Bencode::Dictionary(decoded) = bencode::decode_bencode(&body.to_vec(), & mut 0).unwrap() {
+            if let Some(bencode::Bencode::Integer(interval)) = decoded.get("interval") {
+                tracker.interval = *interval;
+            }
+            
+            if let Some(bencode::Bencode::String(peers)) = decoded.get("peers") {            // compact version
+                return String::from_utf8(peers.clone()).unwrap()
+            }
+
+            else if let Some(bencode::Bencode::List(peers)) = decoded.get("peers") {    // Non-compact version
+                let mut peer_ip_port: HashMap<String, i64> = HashMap::new();
+                for peer in peers {
+                    if let bencode::Bencode::Dictionary(peer_dict) = peer {
+                        if let Some(bencode::Bencode::String(ip)) = peer_dict.get("ip") {
+                            if let Some(bencode::Bencode::Integer(port)) = peer_dict.get("port") {
+                                let ip = String::from_utf8(ip.to_vec()).unwrap();
+                                peer_ip_port.insert(ip, *port);
+                            }
+                        }
+                    }
+                }
+            return format!("{:#?}", peer_ip_port);
+            }
+        }
+        // cursed little shit.
     }
     String::new()
 }
@@ -74,7 +81,7 @@ pub async fn start_tracker_comm(infohash: Vec<u8>, announce_list: Vec<String>, s
     let mut http_trackers = Vec::new();
     
     for tracker_url in announce_list {
-        let tracker: Tracker = Tracker {tracker_url: tracker_url.clone(),
+        let mut tracker: Tracker = Tracker {tracker_url: tracker_url.clone(),
                                         infohash: infohash.clone(),
                                         size: size,
                                         peerid: session_uuid.clone(),
