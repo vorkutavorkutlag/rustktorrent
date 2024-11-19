@@ -18,17 +18,17 @@ async fn main() {
     session_uuid.push_str(uuid);
 
     let filename: &str = "test.torrent";
-    let (infohash,
-         announce_list,
-         piece_length,
-         size,
-         num_pieces,
-         pieces) = match torrent_reader::parse_torrent(filename) {
-        
-        Ok(values) => values,
-        Err(e) => {
-            eprintln!("Error parsing torrent: {}", e);
-            process::exit(1);}
+    let 
+    (infohash,
+    announce_list,
+    piece_length,
+    size,
+    num_pieces,
+    pieces) = match torrent_reader::parse_torrent(filename) {    
+      Ok(values) => values,
+      Err(e) => {
+        eprintln!("Error parsing torrent: {}", e);
+        process::exit(1);}
     };
 
     let downloaded: i64 = 0;
