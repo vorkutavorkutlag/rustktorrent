@@ -9,6 +9,7 @@ reqwest = "0.12.9"
 tokio = { version = "1.14.1", features = ["full"] }
 public-ip = "0.2.2"
 percent-encoding = "2.3.1"
+bytes = "1.8.0"
 
 [dependencies.uuid]
 version = "1.11.0"
