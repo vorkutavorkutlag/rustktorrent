@@ -14,20 +14,17 @@ struct Tracker {
 }
 
 fn parse_compact_peers(peers: &Vec<u8>) -> Vec<SocketAddrV4> {
+  // 4 bytes for IP + 2 bytes for port
   let mut result = Vec::new();
-  let peer_length = 6; // 4 bytes for IP + 2 bytes for port
+  let peer_length = 6;
 
   for chunk in peers.chunks(peer_length) {
     if chunk.len() != peer_length {
       continue
     }
-    // Extract the IP address (4 bytes)
     let ip = Ipv4Addr::new(chunk[0], chunk[1], chunk[2], chunk[3]);
-
-    // Extract the port (2 bytes) and convert it from big-endian to u16
     let port = u16::from_be_bytes([chunk[4], chunk[5]]);
 
-    // Create a SocketAddrV4 from the IP and port
     let socket_addr = SocketAddrV4::new(ip, port);
     result.push(socket_addr);
   }
@@ -42,37 +39,37 @@ fn parse_http(body: Bytes, tracker: &mut Tracker) -> Result<Vec<SocketAddrV4>, S
   let decoded = bencode::decode_bencode(&body.to_vec(), &mut 0).map_err(|_| "Failed to decode bencode")?;
   
   if let bencode::Bencode::Dictionary(decoded_dict) = decoded {
-      // Extract interval, returning an error if not found
-      let interval = decoded_dict
-          .get("interval")
-          .and_then(|b| if let bencode::Bencode::Integer(i) = b { Some(*i) } else { None })
-          .ok_or_else(|| "Missing or invalid 'interval'")?;
+    // Extract interval, returning an error if not found
+    let interval = decoded_dict
+      .get("interval")
+      .and_then(|b| if let bencode::Bencode::Integer(i) = b { Some(*i) } else { None })
+      .ok_or_else(|| "Missing or invalid 'interval'")?;
       
-      tracker.interval = interval;
+    tracker.interval = interval;
 
       // Match and parse peers
-      match decoded_dict.get("peers") {
-          Some(bencode::Bencode::String(peers)) => {
-              Ok(parse_compact_peers(peers))
-          }
-          Some(bencode::Bencode::List(peers_list)) => {
-              let mut peer_ip_port = Vec::new();
+    match decoded_dict.get("peers") {
+      Some(bencode::Bencode::String(peers)) => {
+          Ok(parse_compact_peers(peers))
+        }
+      Some(bencode::Bencode::List(peers_list)) => {
+        let mut peer_ip_port = Vec::new();
 
-              for peer in peers_list {
-                if let bencode::Bencode::Dictionary(peer_dict) = peer {
-                  if let (Some(bencode::Bencode::String(ip)), Some(bencode::Bencode::Integer(port))) = 
-                    (peer_dict.get("ip"), peer_dict.get("port")) 
-                      {
-                        if ip.len() == 4 && (0..=u16::MAX as i64).contains(port) {
-                          let ip_addr = Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]);
-                          peer_ip_port.push(SocketAddrV4::new(ip_addr, *port as u16));
-                      } else {
-                          return Err("Invalid IP length or port".to_string());
-                        }
+        for peer in peers_list {
+          if let bencode::Bencode::Dictionary(peer_dict) = peer {
+            if let (Some(bencode::Bencode::String(ip)), Some(bencode::Bencode::Integer(port))) = 
+              (peer_dict.get("ip"), peer_dict.get("port")) 
+                  {
+                    if ip.len() == 4 && (0..=u16::MAX as i64).contains(port) {
+                      let ip_addr = Ipv4Addr::new(ip[0], ip[1], ip[2], ip[3]);
+                      peer_ip_port.push(SocketAddrV4::new(ip_addr, *port as u16));
+                    } else {
+                      return Err("Invalid IP length or port".to_string());
                     }
-                }
+                  }
+               }
             }
-            Ok(peer_ip_port)
+        Ok(peer_ip_port)
         }
         _ => Err("Missing or invalid 'peers' data".to_string()),
     }
