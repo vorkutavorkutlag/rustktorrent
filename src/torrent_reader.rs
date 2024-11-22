@@ -2,7 +2,7 @@ use crate::bencode;
 use sha1::{Sha1, Digest};
 
 
-pub fn parse_torrent(filename: &str) -> Result<(Vec<u8>, Vec<String>, i64, i64, i64, Vec<u8>), String> {
+pub fn parse_torrent(filename: &str) -> Result<(Vec<u8>, Vec<String>, u64, u64, u64, Vec<u8>), String> {
   // Decode the torrent file into a HashMap
   let torrent = match bencode::read_torrent_file(filename) {
     Ok(bytes) => {
@@ -49,8 +49,8 @@ pub fn parse_torrent(filename: &str) -> Result<(Vec<u8>, Vec<String>, i64, i64, 
     _ => return Err("The 'info' key is not a dictionary".to_string()),
   };
   
-  let piece_length = match info_map.get("piece length") {
-    Some(bencode::Bencode::Integer(len)) => *len,
+  let piece_length: u64 = match info_map.get("piece length") {
+    Some(bencode::Bencode::Integer(len)) => *len as u64,
     _ => return Err("Missing or invalid 'piece length'".to_string()),
   };
 
@@ -60,15 +60,15 @@ pub fn parse_torrent(filename: &str) -> Result<(Vec<u8>, Vec<String>, i64, i64, 
   };
 
   // Calculate size
-  let size = if let Some(bencode::Bencode::Integer(len)) = info_map.get("length") {
-      *len
+  let size: u64 = if let Some(bencode::Bencode::Integer(len)) = info_map.get("length") {
+      *len as u64
   
   } else if let Some(bencode::Bencode::List(files)) = info_map.get("files") {
-    let mut total_size = 0;
+    let mut total_size: u64 = 0;
     for file in files {
       if let bencode::Bencode::Dictionary(file_map) = file {
         if let Some(bencode::Bencode::Integer(len)) = file_map.get("length") {
-          total_size += len;
+          total_size += *len as u64;
               }
           }
       }
@@ -78,7 +78,7 @@ pub fn parse_torrent(filename: &str) -> Result<(Vec<u8>, Vec<String>, i64, i64, 
   };
 
   // Calculate num_pieces
-  let num_pieces = (size as f64 / piece_length as f64).ceil() as i64;
+  let num_pieces = (size as f64 / piece_length as f64).ceil() as u64;
 
   Ok((hashed_info, announce_list, piece_length, size, num_pieces, pieces))
 }

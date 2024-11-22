@@ -1,4 +1,4 @@
-use std::{net::{Ipv4Addr, SocketAddrV4, TcpStream, ToSocketAddrs}, time::Duration, thread};
+use std::{net::{Ipv4Addr, SocketAddrV4, TcpStream, ToSocketAddrs}, sync::mpsc, thread, time::Duration};
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use bytes::Bytes;
 use url::Url;
@@ -8,10 +8,10 @@ struct Tracker {
     tracker_url: String,
     port: u16,
     infohash: Vec<u8>,
-    size: i64,
+    size: u64,
     peerid: String,
-    downloaded: i64,
-    uploaded: i64, 
+    downloaded: u64,
+    uploaded: u64, 
     interval: u64,
 }
 
@@ -100,12 +100,12 @@ fn parse_http(body: Bytes, tracker: &mut Tracker) -> Result<Vec<SocketAddrV4>, S
 }
 
 
-async fn http_comm(mut tracker: Tracker) -> () {
+async fn http_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) -> () {
  // First, find the port on which the tracker is listening, if it is not given.
  // By default, port == 0, unless we successfully parsed it from the url.
   if tracker.port == 0 {
     let mut potential_ports = (6881..6889).collect::<Vec<u16>>();
-    potential_ports.push(6969);
+    potential_ports.extend([6969, 80]);
     for port in potential_ports {
       if is_port_open(&tracker.tracker_url, port) {
         tracker.port = port;
@@ -114,7 +114,7 @@ async fn http_comm(mut tracker: Tracker) -> () {
     }
   
   if tracker.port == 0 {
-    // None of the default ports are open and we don't have a destined port
+    // if port is still zero, none of the default ports are open and we don't have a destined port
     return
   }
 
@@ -133,29 +133,31 @@ async fn http_comm(mut tracker: Tracker) -> () {
       tracker.size - tracker.downloaded,
   ));
 
-    loop {
-      let res = match client.get(main_url).header("User-Agent", reqwest::header::USER_AGENT).send().await {
-        Ok(response) => response,
-        Err(_) => {thread::sleep(Duration::from_secs(tracker.interval)); continue},
-      };
+  loop {
+    let res = match client.get(&main_url).header("User-Agent", reqwest::header::USER_AGENT).send().await {
+      Ok(response) => response,
+      Err(_) => {thread::sleep(Duration::from_secs(tracker.interval)); continue},
+    };
     
-      let body = match res.bytes().await {
-          Ok(bod) => bod,
-          Err(_) => {thread::sleep(Duration::from_secs(tracker.interval)); continue},
-      };
-
-      match parse_http(body, &mut tracker) {
-        Ok(peer_addresses) => todo!("Send peer adresses to arc"),
+    let body = match res.bytes().await {
+        Ok(bod) => bod,
         Err(_) => {thread::sleep(Duration::from_secs(tracker.interval)); continue},
-      }
+    };
+
+    match parse_http(body, &mut tracker) {
+      Ok(peer_addresses) => {println!("Sending peers... interval:{}", tracker.interval); tx.send(peer_addresses).unwrap()},
+      Err(_) => {thread::sleep(Duration::from_secs(tracker.interval)); continue},
+    }
+
+    thread::sleep(Duration::from_secs(tracker.interval));
   }
 }
 
-async fn udp_comm(tracker: Tracker) {
-    // socket comm
+async fn udp_comm(tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) {
+    todo!("ADD UDP COMMUNICATION SEQUENCE. REREAD DOCS");
 }
 
-pub async fn start_tracker_comm(infohash: Vec<u8>, announce_list: Vec<String>, size: i64, session_uuid: String, downloaded: i64) {
+pub async fn start_tracker_comm(infohash: Vec<u8>, announce_list: Vec<String>, size: u64, session_uuid: String, downloaded: u64, tx: mpsc::Sender<Vec<SocketAddrV4>>) {
     println!("Starting tracker comm..! {}", format!("{:#?}", announce_list));
     let mut udp_trackers = Vec::new();
     let mut http_trackers = Vec::new();
@@ -166,7 +168,7 @@ pub async fn start_tracker_comm(infohash: Vec<u8>, announce_list: Vec<String>, s
         Err(_) => {eprintln!("Invalid announce url - Ignoring"); continue;}
       };
       
-      let port = parsed_url.port().unwrap_or(0);
+      let port: u16 = parsed_url.port().unwrap_or(0);
 
       let mut tracker: Tracker = Tracker 
        {tracker_url: tracker_url.clone(),
@@ -175,28 +177,13 @@ pub async fn start_tracker_comm(infohash: Vec<u8>, announce_list: Vec<String>, s
         size: size,
         peerid: session_uuid.clone(),
         downloaded: downloaded,
-        interval: 0, uploaded: 0};
-
+        interval: 60, uploaded: 0};
+      
+      let tx_clone: mpsc::Sender<Vec<SocketAddrV4>> = tx.clone();
       match parsed_url.scheme() {
-        "http" => http_trackers.push(thread::spawn(move || {http_comm(tracker)})),
-        "udp" => udp_trackers.push(thread::spawn(move || {udp_comm(tracker)})),
-        _ => {eprintln!("Invalid announce url - Ignoring"); continue;}
+        "http" | "https" => http_trackers.push(tokio::spawn(http_comm(tracker, tx_clone))),
+        "udp" => udp_trackers.push(tokio::spawn(udp_comm(tracker, tx_clone))),
+        _ => continue
       }
   }
-
-  for tracker in http_trackers {
-    match tracker.join() { 
-      Ok(ok) => println!("{:#?}", ok.await),
-      Err(_) => println!("err")
-      }
-  }
-
-    
-  for tracker in udp_trackers {
-    match tracker.join() { 
-      Ok(ok) =>  println!("{:#?}", ok.await),
-      Err(_) => println!("err")
-      }
-  }
-
 }
