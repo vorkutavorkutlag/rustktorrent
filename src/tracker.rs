@@ -1,7 +1,8 @@
-use std::{net::{Ipv4Addr, SocketAddrV4, TcpStream, ToSocketAddrs}, sync::mpsc, thread, time::Duration};
+use std::{error::Error, net::{Ipv4Addr, SocketAddrV4, TcpStream, ToSocketAddrs, UdpSocket}, sync::mpsc, thread, time::Duration};
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use bytes::Bytes;
 use url::Url;
+use rand::Rng;
 use crate::bencode;
 
 struct Tracker {
@@ -53,7 +54,7 @@ fn is_port_open(url: &str, port: u16) -> bool {
   }
 }
 
-fn parse_http(body: Bytes, tracker: &mut Tracker) -> Result<Vec<SocketAddrV4>, String> {
+fn parse_tracker_response(body: Bytes, tracker: &mut Tracker) -> Result<Vec<SocketAddrV4>, String> {
   // Given a response body from an HTTP tracker, updates tracker interval and returns peer information
   // Will Err if it cannot parse either interval or adresses
 
@@ -144,7 +145,7 @@ async fn http_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) ->
         Err(_) => {thread::sleep(Duration::from_secs(tracker.interval)); continue},
     };
 
-    match parse_http(body, &mut tracker) {
+    match parse_tracker_response(body, &mut tracker) {
       Ok(peer_addresses) => {println!("Sending peers... interval:{}", tracker.interval); tx.send(peer_addresses).unwrap()},
       Err(_) => {thread::sleep(Duration::from_secs(tracker.interval)); continue},
     }
@@ -153,8 +154,47 @@ async fn http_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) ->
   }
 }
 
+fn udp_connection_request(socket: &mut UdpSocket) -> Result<(i64, i32), Box<dyn Error>> {
+  const MAGIC_CONSTANT: i64 = 0x41727101980; // Magic constant for protocol
+  const CONNECT_ACTION: i32 = 0; 
+  const RESPONSE_LENGTH: usize = 16;
+
+  let transaction_id: i32 = rand::thread_rng().gen_range(0..=65535);
+  
+  let mut packet = vec![];
+  packet.extend(&MAGIC_CONSTANT.to_be_bytes());
+  packet.extend(&CONNECT_ACTION.to_be_bytes());
+  packet.extend(&transaction_id.to_be_bytes());
+
+  socket.send(&packet)?;
+
+  let mut response = [0u8; RESPONSE_LENGTH];
+  let (size, _) = socket.recv_from(&mut response)?;
+
+  if size != RESPONSE_LENGTH {
+    return Err("Invalid response length".into());
+  }
+  
+  // parse connection response
+  let res_action = i32::from_be_bytes(response[0..4].try_into()?);
+  let res_transaction = i32::from_be_bytes(response[4..8].try_into()?);
+  let connection_id = i64::from_be_bytes(response[8..16].try_into()?);
+  
+  // validation
+  if res_action != CONNECT_ACTION || res_transaction != transaction_id {
+    return Err("Invalid connection response".into());
+  }
+
+  // return connection ID and transaction ID
+  Ok((connection_id, transaction_id))
+
+}
+
+
 async fn udp_comm(tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) {
-    todo!("ADD UDP COMMUNICATION SEQUENCE. REREAD DOCS");
+  let tracker_address = format!("{}:{}", tracker.tracker_url, tracker.port);
+  let mut socket = UdpSocket::bind(tracker_address).unwrap();
+  udp_connection_request(&mut socket).unwrap();
 }
 
 pub async fn start_tracker_comm(infohash: Vec<u8>, announce_list: Vec<String>, size: u64, session_uuid: String, downloaded: u64, tx: mpsc::Sender<Vec<SocketAddrV4>>) {
