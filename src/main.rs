@@ -1,4 +1,5 @@
-use std::{process, str, sync::mpsc};
+use std::{process, str};
+use tokio::sync::mpsc;
 use uuid::Uuid;
 
 mod bencode;
@@ -31,11 +32,12 @@ async fn main() {
       };
     let downloaded: u64 = 0;
 
-    let (tracker_tx, tracker_rx) = mpsc::channel();
+    // temporary arbitrary buffer. should research more and see how big communication actually gets
+    let (tracker_tx, mut tracker_rx) = mpsc::channel(1024);
 
     tracker::start_tracker_comm(infohash, announce_list, size, session_uuid, downloaded, tracker_tx).await;
 
-    while let Ok(peer) = tracker_rx.recv() {
+    while let Some(peer) = tracker_rx.recv().await {
       println!("Main received peer: {:#?}", peer);
   }
     

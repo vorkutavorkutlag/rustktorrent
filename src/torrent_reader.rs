@@ -22,7 +22,6 @@ pub fn parse_torrent(filename: &str) -> Result<(Vec<u8>, Vec<String>, u64, u64, 
   let mut hasher = Sha1::new();
   hasher.update(&info_bencoded);
   let hash_result = hasher.finalize();
-  println!("{:x}", hash_result);
   let hashed_info= hash_result.to_vec();
 
     // Get the announce list (single announce and 'announce-list')

@@ -1,6 +1,7 @@
-use std::{error::Error, net::{Ipv4Addr, SocketAddrV4, TcpStream, ToSocketAddrs, UdpSocket}, sync::mpsc, thread, time::Duration};
+use std::{net::{Ipv4Addr, SocketAddrV4, TcpStream, ToSocketAddrs, UdpSocket}, thread, time::Duration};
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use bytes::Bytes;
+use tokio::sync::mpsc;
 use url::Url;
 use rand::Rng;
 use crate::bencode;
@@ -110,14 +111,12 @@ async fn http_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) ->
     for port in potential_ports {
       if is_port_open(&tracker.tracker_url, port) {
         tracker.port = port;
+        break 
         }
+      // if port is still zero, none of the default ports are open and we don't have a destined port
+      return
       }
     }
-  
-  if tracker.port == 0 {
-    // if port is still zero, none of the default ports are open and we don't have a destined port
-    return
-  }
 
   // initialize reqwest client
   let client = reqwest::Client::new();
@@ -137,68 +136,167 @@ async fn http_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) ->
   loop {
     let res = match client.get(&main_url).header("User-Agent", reqwest::header::USER_AGENT).send().await {
       Ok(response) => response,
-      Err(_) => {thread::sleep(Duration::from_secs(tracker.interval)); continue},
+      Err(_) => {tokio::time::sleep(Duration::from_secs(tracker.interval)).await; continue},
     };
     
     let body = match res.bytes().await {
         Ok(bod) => bod,
-        Err(_) => {thread::sleep(Duration::from_secs(tracker.interval)); continue},
+        Err(_) => {tokio::time::sleep(Duration::from_secs(tracker.interval)).await; continue},
     };
 
     match parse_tracker_response(body, &mut tracker) {
-      Ok(peer_addresses) => {println!("Sending peers... interval:{}", tracker.interval); tx.send(peer_addresses).unwrap()},
-      Err(_) => {thread::sleep(Duration::from_secs(tracker.interval)); continue},
+      Ok(peer_addresses) => {println!("Sending peers... interval:{}", tracker.interval); tx.send(peer_addresses).await.unwrap()},
+      Err(_) => {tokio::time::sleep(Duration::from_secs(tracker.interval)).await; continue},
     }
 
-    thread::sleep(Duration::from_secs(tracker.interval));
+    tokio::time::sleep(Duration::from_secs(tracker.interval)).await;
   }
 }
 
-fn udp_connection_request(socket: &mut UdpSocket) -> Result<(i64, i32), Box<dyn Error>> {
+
+fn udp_connection_request(socket: &mut UdpSocket) -> Option<(i64, u16)> {
   const MAGIC_CONSTANT: i64 = 0x41727101980; // Magic constant for protocol
   const CONNECT_ACTION: i32 = 0; 
   const RESPONSE_LENGTH: usize = 16;
 
-  let transaction_id: i32 = rand::thread_rng().gen_range(0..=65535);
+  let transaction_id: u16 = rand::thread_rng().gen_range(0..=65535);
   
-  let mut packet = vec![];
+  let mut packet: Vec<u8> = vec![];
   packet.extend(&MAGIC_CONSTANT.to_be_bytes());
   packet.extend(&CONNECT_ACTION.to_be_bytes());
   packet.extend(&transaction_id.to_be_bytes());
 
-  socket.send(&packet)?;
+  socket.send(&packet).unwrap();
 
   let mut response = [0u8; RESPONSE_LENGTH];
-  let (size, _) = socket.recv_from(&mut response)?;
+  let (size, _) = socket.recv_from(&mut response).unwrap();
 
   if size != RESPONSE_LENGTH {
-    return Err("Invalid response length".into());
+    return None;
   }
   
   // parse connection response
-  let res_action = i32::from_be_bytes(response[0..4].try_into()?);
-  let res_transaction = i32::from_be_bytes(response[4..8].try_into()?);
-  let connection_id = i64::from_be_bytes(response[8..16].try_into()?);
+  let res_action = i32::from_be_bytes(response[0..4].try_into().unwrap());
+  let res_transaction = u16::from_be_bytes(response[4..8].try_into().unwrap());
+  let connection_id = i64::from_be_bytes(response[8..16].try_into().unwrap());
   
   // validation
   if res_action != CONNECT_ACTION || res_transaction != transaction_id {
-    return Err("Invalid connection response".into());
+    return None
   }
 
   // return connection ID and transaction ID
-  Ok((connection_id, transaction_id))
+  Some((connection_id, transaction_id))
 
 }
 
+async fn udp_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) -> () {
+  // in case we didn't parse port correctly
+  // 6969 is one of the bittorrent ports
+  if tracker.port == 0 {
+    tracker.port = 6969;
+  }
 
-async fn udp_comm(tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) {
-  let tracker_address = format!("{}:{}", tracker.tracker_url, tracker.port);
-  let mut socket = UdpSocket::bind(tracker_address).unwrap();
-  udp_connection_request(&mut socket).unwrap();
+  let url = match url::Url::parse(&tracker.tracker_url) {
+    Ok(url) => url,
+    Err(_) => return    // unable to resolve dns - no point in trying more
+  };
+  
+  let addrs: Vec<_> = url.socket_addrs(|| None)
+    .unwrap()
+    .into_iter()
+    .filter(|addr| addr.is_ipv4()) // ensures only ipv4
+    .collect();
+
+  if addrs.is_empty() {
+    return;
+  }
+
+  println!("{:#?}", addrs);
+  let mut socket = UdpSocket::bind(format!("0.0.0.0:{}", tracker.port)).unwrap(); // initialize socket
+  socket.connect(&*addrs).unwrap();                                                          // actually connect it
+  
+  // loop until we get a good response
+  let (connection_id, transaction_id) = loop {
+    if let Some(vals) = udp_connection_request(&mut socket) {
+      break vals;
+    } else {
+      tokio::time::sleep(Duration::from_secs(tracker.interval)).await;
+    }
+  };
+  
+  
+  const CONNECT_ACTION: i32 = 1; 
+  const DEFAULT_IP: u8 = 0;
+  const DEFAULT_NUMWANT: i8 = -1;
+  let EVENT: u8 = 2;    // temporary, should be dynamically decided as started, completed, stopped (2, 1, 3)
+
+  loop {
+    let key: u16 = rand::thread_rng().gen_range(0..=65535);
+    let left: u64 = tracker.downloaded - tracker.size;
+    let mut packet: Vec<u8> = vec![];
+    packet.extend(&connection_id.to_be_bytes());
+    packet.extend(&CONNECT_ACTION.to_be_bytes());
+    packet.extend(&transaction_id.to_be_bytes());
+    packet.extend(&tracker.infohash);
+    packet.extend(tracker.peerid.as_bytes());
+    packet.extend(&tracker.downloaded.to_be_bytes());
+    packet.extend(&left.to_be_bytes());
+    packet.extend(&tracker.uploaded.to_be_bytes());
+    packet.extend(&connection_id.to_be_bytes());
+    packet.extend(&EVENT.to_be_bytes());
+    packet.extend(&DEFAULT_IP.to_be_bytes());
+    packet.extend(&key.to_be_bytes());
+    packet.extend(&DEFAULT_NUMWANT.to_be_bytes());
+    packet.extend(&tracker.port.to_be_bytes());
+
+    socket.send(&packet).unwrap();
+
+    // initial response size is constant, 20 bytes
+    let mut response_metadata: Vec<u8> = vec![0u8; 20]; 
+    let (size, _) = socket.recv_from(&mut response_metadata).unwrap();
+
+    if size < 20 {
+      tokio::time::sleep(Duration::from_secs(tracker.interval)).await;
+    }
+
+    let action = i32::from_be_bytes(response_metadata[0..4].try_into().unwrap());
+    let res_transaction = u16::from_be_bytes(response_metadata[4..8].try_into().unwrap());
+
+    if action != CONNECT_ACTION || res_transaction != transaction_id {
+      tokio::time::sleep(Duration::from_secs(tracker.interval)).await;
+    }
+
+    let interval = u32::from_be_bytes(response_metadata[8..12].try_into().unwrap()) as u64;
+    let leechers = u32::from_be_bytes(response_metadata[12..16].try_into().unwrap()); // Number of leechers
+    let seeders = u32::from_be_bytes(response_metadata[16..20].try_into().unwrap());  // Number of seeders
+
+
+    // each ip address is composed of 6 bytes. meaning the sum size is the number of all peers times 6
+    let peer_data_len: usize= ((leechers + seeders) * 6) as usize;
+    let mut response: Vec<u8> = vec![0u8; peer_data_len]; 
+    let _ = socket.recv_from(&mut response).unwrap();
+
+    let mut peers: Vec<SocketAddrV4> = vec![];
+    let mut index = 0;
+    while index + 6 <= size {
+        let ip = Ipv4Addr::new(response[index], response[index + 1], response[index + 2], response[index + 3]);
+        let port = u16::from_be_bytes([response[index + 4], response[index + 5]]);
+        peers.push(SocketAddrV4::new(ip, port));
+        index += 6;
+    }
+
+    // Send parsed peers via the channel
+    tx.send(peers).await.unwrap();
+
+    // Sleep for the interval specified by the tracker
+    tracker.interval = interval;
+    tokio::time::sleep(Duration::from_secs(tracker.interval)).await;
+
+  }
 }
 
 pub async fn start_tracker_comm(infohash: Vec<u8>, announce_list: Vec<String>, size: u64, session_uuid: String, downloaded: u64, tx: mpsc::Sender<Vec<SocketAddrV4>>) {
-    println!("Starting tracker comm..! {}", format!("{:#?}", announce_list));
     let mut udp_trackers = Vec::new();
     let mut http_trackers = Vec::new();
     
