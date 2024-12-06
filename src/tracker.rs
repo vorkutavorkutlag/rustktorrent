@@ -191,30 +191,33 @@ fn udp_connection_request(socket: &mut UdpSocket) -> Option<(i64, u16)> {
 }
 
 async fn udp_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) -> () {
-  // in case we didn't parse port correctly
-  // 6969 is one of the bittorrent ports
-  if tracker.port == 0 {
-    tracker.port = 6969;
-  }
-
   let url = match url::Url::parse(&tracker.tracker_url) {
     Ok(url) => url,
     Err(_) => return    // unable to resolve dns - no point in trying more
   };
   
-  let addrs: Vec<_> = url.socket_addrs(|| None)
-    .unwrap()
-    .into_iter()
-    .filter(|addr| addr.is_ipv4()) // ensures only ipv4
-    .collect();
+  // tracker.port == 0 means we did not find a default port, so we need to pass None
+  let addrs: Vec<_> = match url.socket_addrs(||  if tracker.port > 0 {Some(tracker.port)} else {None}) {
+    Ok(addrs) => addrs
+        .into_iter()
+        .filter(|addr| addr.is_ipv4()) 
+        .collect::<Vec<_>>(),
+    Err(e) => {
+        eprintln!(
+            "Failed to resolve tracker addresses for {}: {}",
+            tracker.tracker_url, e
+        );
+        return;
+    }
+  };
 
   if addrs.is_empty() {
     return;
   }
 
   println!("{:#?}", addrs);
-  let mut socket = UdpSocket::bind(format!("0.0.0.0:{}", tracker.port)).unwrap(); // initialize socket
-  socket.connect(&*addrs).unwrap();                                                          // actually connect it
+  let mut socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).unwrap();          // bind socket
+  socket.connect(&*addrs).unwrap();                                                          // actually connect it to server
   
   // loop until we get a good response
   let (connection_id, transaction_id) = loop {
