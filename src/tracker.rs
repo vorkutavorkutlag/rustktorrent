@@ -270,7 +270,7 @@ async fn udp_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) -> 
       tokio::time::sleep(Duration::from_secs(tracker.interval)).await;
     }
 
-    let interval = u32::from_be_bytes(response_metadata[8..12].try_into().unwrap()) as u64;
+    let interval = u64::from_be_bytes(response_metadata[8..12].try_into().unwrap());
     let leechers = u32::from_be_bytes(response_metadata[12..16].try_into().unwrap()); // Number of leechers
     let seeders = u32::from_be_bytes(response_metadata[16..20].try_into().unwrap());  // Number of seeders
 

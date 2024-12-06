@@ -8,7 +8,7 @@ mod tracker;
 
 #[tokio::main]
 async fn main() {
-    const BRAND: & str = "RK";
+    const BRAND: &str = "RK";
     const VERSION: &str = "01";
     let uuid = &format!("{}", Uuid::new_v4())[..16];
     
@@ -33,7 +33,7 @@ async fn main() {
     let downloaded: u64 = 0;
 
     // temporary arbitrary buffer. should research more and see how big communication actually gets
-    let (tracker_tx, mut tracker_rx) = mpsc::channel(1024);
+    let (tracker_tx, mut tracker_rx) = mpsc::channel(6);
 
     tracker::start_tracker_comm(infohash, announce_list, size, session_uuid, downloaded, tracker_tx).await;
 
