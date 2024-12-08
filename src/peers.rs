@@ -1,6 +1,7 @@
 use std::{net::{TcpStream, SocketAddrV4}, io::prelude::*};
 
 use sha1::digest::typenum::Bit;
+use tokio::sync::mpsc::Receiver;
 
 enum BittorrentConstants {
   Choke = 0,
@@ -107,4 +108,17 @@ async fn interested_msg(mut t_peer: &TcpStream, ti: TorrentInfo) -> Result<(), S
   }
 
   return Ok(());
+}
+
+async fn p_process(t_peer: SocketAddrV4) {
+  todo!();
+}
+
+pub async fn mpsc_p_process(mut tracker_rx: Receiver<Vec<SocketAddrV4>>) {
+  let mut peer_threads = vec![];
+  while let Some(peers) = tracker_rx.recv().await {
+    for peer in peers {
+      peer_threads.push(tokio::spawn(p_process(peer)));
+    }
+  }
 }
