@@ -5,6 +5,7 @@ use uuid::Uuid;
 mod bencode;
 mod torrent_reader;
 mod tracker;
+mod peers;
 
 #[tokio::main]
 async fn main() {
