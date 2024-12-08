@@ -261,6 +261,7 @@ async fn udp_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) -> 
 
     if size < 20 {
       tokio::time::sleep(Duration::from_secs(tracker.interval)).await;
+      continue;
     }
 
     let action = i32::from_be_bytes(response_metadata[0..4].try_into().unwrap());
@@ -268,11 +269,12 @@ async fn udp_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) -> 
 
     if action != CONNECT_ACTION || res_transaction != transaction_id {
       tokio::time::sleep(Duration::from_secs(tracker.interval)).await;
+      continue;
     }
 
     let interval = u64::from_be_bytes(response_metadata[8..12].try_into().unwrap());
-    let leechers = u32::from_be_bytes(response_metadata[12..16].try_into().unwrap()); // Number of leechers
-    let seeders = u32::from_be_bytes(response_metadata[16..20].try_into().unwrap());  // Number of seeders
+    let leechers = u32::from_be_bytes(response_metadata[12..16].try_into().unwrap()); 
+    let seeders = u32::from_be_bytes(response_metadata[16..20].try_into().unwrap());  
 
 
     // each ip address is composed of 6 bytes. meaning the sum size is the number of all peers times 6
@@ -289,21 +291,19 @@ async fn udp_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) -> 
         index += 6;
     }
 
-    // Send parsed peers via the channel
     tx.send(peers).await.unwrap();
-
-    // Sleep for the interval specified by the tracker
+    
     tracker.interval = interval;
     tokio::time::sleep(Duration::from_secs(tracker.interval)).await;
 
   }
 }
 
-pub async fn start_tracker_comm(infohash: Vec<u8>, announce_list: Vec<String>, size: u64, session_uuid: String, downloaded: u64, tx: mpsc::Sender<Vec<SocketAddrV4>>) {
+pub async fn start_tracker_comm(infohash: Vec<u8>, mut announce_list: Vec<String>, size: u64, session_uuid: String, downloaded: u64, tx: mpsc::Sender<Vec<SocketAddrV4>>) {
     let mut udp_trackers = Vec::new();
     let mut http_trackers = Vec::new();
     
-    for tracker_url in announce_list {
+    while let Some(tracker_url) = announce_list.pop() {
       let parsed_url = match Url::parse(&tracker_url) {
         Ok(parsed) => parsed,
         Err(_) => {eprintln!("Invalid announce url - Ignoring"); continue;}
@@ -312,7 +312,7 @@ pub async fn start_tracker_comm(infohash: Vec<u8>, announce_list: Vec<String>, s
       let port: u16 = parsed_url.port().unwrap_or(0);
 
       let mut tracker: Tracker = Tracker 
-       {tracker_url: tracker_url.clone(),
+       {tracker_url: tracker_url,
         port: port,
         infohash: infohash.clone(),
         size: size,
