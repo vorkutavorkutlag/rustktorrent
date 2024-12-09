@@ -1,51 +1,12 @@
-use std::{net::{TcpStream, SocketAddrV4}, io::prelude::*};
+use std::{net::{TcpStream, SocketAddrV4}, error::Error, sync::{Arc, Mutex}, io::prelude::*};
 
-use sha1::digest::typenum::Bit;
 use tokio::sync::mpsc::Receiver;
 
-enum BittorrentConstants {
-  Choke = 0,
-  Unchoke = 1,
-  Interested = 2,
-  NotInterested = 3,
-  Have = 4,
-  Bitfield = 5,
-  Request = 6,
-  Piece = 7,
-  Cancel = 8,
-  Port = 9,
-  BlockLength = 16384 // 2^14
-}
+use crate::structs_enums;
+use structs_enums::{TorrentInfo, BittorrentConstants};
 
-impl TryFrom<u8> for BittorrentConstants {
-  type Error = &'static str;
-
-  fn try_from(value: u8) -> Result<Self, Self::Error> {
-      match value {
-          0 => Ok(BittorrentConstants::Choke),
-          1 => Ok(BittorrentConstants::Unchoke),
-          2 => Ok(BittorrentConstants::Interested),
-          3 => Ok(BittorrentConstants::NotInterested),
-          4 => Ok(BittorrentConstants::Have),
-          5 => Ok(BittorrentConstants::Bitfield),
-          6 => Ok(BittorrentConstants::Request),
-          7 => Ok(BittorrentConstants::Piece),
-          8 => Ok(BittorrentConstants::Cancel),
-          9 => Ok(BittorrentConstants::Port),
-          _ => Err("Invalid value for BittorrentConstants"),
-      }
-  }
-}
-
-struct TorrentInfo {
-  infohash: &'static [u8],
-  num_pieces: u64,
-  pieces: &'static [u8],
-  peer_id: &'static str,
-}
-
-async fn do_handshake(t_peer: SocketAddrV4, ti: &'static TorrentInfo) -> Result<TcpStream, String> {
-  let mut socket = TcpStream::connect(t_peer).map_err(|e| e.to_string())?;
+async fn do_handshake(t_peer: SocketAddrV4, ti: &'static TorrentInfo) -> Result<TcpStream, Box <dyn Error>> {
+  let mut socket = TcpStream::connect(t_peer)?;
   
   let protocol: &[u8] = "Bittorrent Protocol".as_bytes();
   let p_len: usize = protocol.len();
@@ -57,17 +18,17 @@ async fn do_handshake(t_peer: SocketAddrV4, ti: &'static TorrentInfo) -> Result<
   packet.extend(&p_len.to_be_bytes());
   packet.extend(protocol);
   packet.extend(&reserved);
-  packet.extend(ti.infohash);
+  packet.extend(&ti.infohash);
   packet.extend(pid_bytes);
 
-  socket.write_all(&packet).map_err(|e| e.to_string())?;
+  socket.write_all(&packet)?;
   drop(packet);
 
   let mut response_data: Vec<u8> = vec![0u8; 68]; 
   let size = socket.read(&mut response_data).map_err(|e| e.to_string())?;
 
   if size != 68 {
-    return Err("Invalid response".to_string());
+    return Err("Invalid response".into());
   }
 
   let mut valid_response: bool = true;
@@ -80,10 +41,10 @@ async fn do_handshake(t_peer: SocketAddrV4, ti: &'static TorrentInfo) -> Result<
     return Ok(socket);
   }
 
-  return Err("Invalid response".to_string());
+  Err("Invalid response".into())
 }
 
-async fn interested_msg(mut t_peer: &TcpStream, ti: TorrentInfo) -> Result<(), String> {
+async fn interested_msg(mut t_peer: &TcpStream, ti: &Arc<TorrentInfo>) -> Result<(), String> {
   let length_prefix: u8 = 1;
   let msg_id: u8 = BittorrentConstants::Interested as u8;
 
@@ -107,18 +68,18 @@ async fn interested_msg(mut t_peer: &TcpStream, ti: TorrentInfo) -> Result<(), S
     _ => todo!()
   }
 
-  return Ok(());
+  Ok(())
 }
 
-async fn p_process(t_peer: SocketAddrV4) {
+async fn p_process(t_peer: SocketAddrV4, ti: Arc<TorrentInfo>) {
   todo!();
 }
 
-pub async fn mpsc_p_process(mut tracker_rx: Receiver<Vec<SocketAddrV4>>) {
+pub async fn mpsc_p_process(mut tracker_rx: Receiver<Vec<SocketAddrV4>>, ti: Arc<TorrentInfo>) {
   let mut peer_threads = vec![];
   while let Some(peers) = tracker_rx.recv().await {
     for peer in peers {
-      peer_threads.push(tokio::spawn(p_process(peer)));
+      peer_threads.push(tokio::spawn(p_process(peer, Arc::clone(&ti))));
     }
   }
 }

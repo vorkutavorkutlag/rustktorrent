@@ -2,13 +2,9 @@ use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read};
 
-#[derive(Debug, Clone)]
-pub enum Bencode {
-  Integer(i64),
-  String(Vec<u8>),
-  List(Vec<Bencode>),
-  Dictionary(HashMap<String, Bencode>),
-}
+use crate::structs_enums;
+use structs_enums::Bencode;
+
 
 pub fn encode_bencode(bencode: &Bencode) -> Vec<u8> {
   match bencode {

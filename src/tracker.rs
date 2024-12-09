@@ -1,21 +1,13 @@
-use std::{net::{Ipv4Addr, SocketAddrV4, TcpStream, ToSocketAddrs, UdpSocket}, thread, time::Duration};
+use std::{net::{Ipv4Addr, SocketAddrV4, TcpStream, ToSocketAddrs, UdpSocket}, sync::Arc, time::Duration};
 use percent_encoding::{percent_encode, NON_ALPHANUMERIC};
 use bytes::Bytes;
 use tokio::sync::mpsc;
 use url::Url;
 use rand::Rng;
-use crate::bencode;
+use crate::{bencode, structs_enums::TorrentInfo};
 
-struct Tracker {
-    tracker_url: String,
-    port: u16,
-    infohash: Vec<u8>,
-    size: u64,
-    peerid: String,
-    downloaded: u64,
-    uploaded: u64, 
-    interval: u64,
-}
+use crate::structs_enums;
+use structs_enums::{Bencode, Tracker};
 
 fn parse_compact_peers(peers: &Vec<u8>) -> Vec<SocketAddrV4> {
   // 4 bytes for IP + 2 bytes for port
@@ -61,26 +53,26 @@ fn parse_tracker_response(body: Bytes, tracker: &mut Tracker) -> Result<Vec<Sock
 
   let decoded = bencode::decode_bencode(&body.to_vec(), &mut 0).map_err(|_| "Failed to decode bencode")?;
   
-  if let bencode::Bencode::Dictionary(decoded_dict) = decoded {
+  if let Bencode::Dictionary(decoded_dict) = decoded {
     // Extract interval, returning an error if not found
     let interval = decoded_dict
       .get("interval")
-      .and_then(|b| if let bencode::Bencode::Integer(i) = b { Some(*i) } else { None })
+      .and_then(|b| if let Bencode::Integer(i) = b { Some(*i) } else { None })
       .ok_or_else(|| "Missing or invalid 'interval'")?;
       
     tracker.interval = interval as u64;
 
     // Match and parse peers
     match decoded_dict.get("peers") {
-      Some(bencode::Bencode::String(peers)) => {
+      Some(Bencode::String(peers)) => {
           Ok(parse_compact_peers(peers))
         }
-      Some(bencode::Bencode::List(peers_list)) => {
+      Some(Bencode::List(peers_list)) => {
         let mut peer_ip_port = Vec::new();
 
         for peer in peers_list {
-          if let bencode::Bencode::Dictionary(peer_dict) = peer {
-            if let (Some(bencode::Bencode::String(ip)), Some(bencode::Bencode::Integer(port))) = 
+          if let Bencode::Dictionary(peer_dict) = peer {
+            if let (Some(Bencode::String(ip)), Some(Bencode::Integer(port))) = 
               (peer_dict.get("ip"), peer_dict.get("port")) 
                   {
                     if ip.len() == 4 && (0..=u16::MAX as i64).contains(port) {
@@ -299,11 +291,11 @@ async fn udp_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) -> 
   }
 }
 
-pub async fn start_tracker_comm(infohash: Vec<u8>, mut announce_list: Vec<String>, size: u64, session_uuid: String, downloaded: u64, tx: mpsc::Sender<Vec<SocketAddrV4>>) {
+pub async fn start_tracker_comm(mut ti: Arc<TorrentInfo>, tx: mpsc::Sender<Vec<SocketAddrV4>>) -> () {
     let mut udp_trackers = Vec::new();
     let mut http_trackers = Vec::new();
     
-    while let Some(tracker_url) = announce_list.pop() {
+    for tracker_url in &ti.announce_list {
       let parsed_url = match Url::parse(&tracker_url) {
         Ok(parsed) => parsed,
         Err(_) => {eprintln!("Invalid announce url - Ignoring"); continue;}
@@ -312,12 +304,12 @@ pub async fn start_tracker_comm(infohash: Vec<u8>, mut announce_list: Vec<String
       let port: u16 = parsed_url.port().unwrap_or(0);
 
       let mut tracker: Tracker = Tracker 
-       {tracker_url: tracker_url,
+       {tracker_url: tracker_url.clone(),
         port: port,
-        infohash: infohash.clone(),
-        size: size,
-        peerid: session_uuid.clone(),
-        downloaded: downloaded,
+        infohash: ti.infohash.clone(),
+        size: ti.size,
+        peerid: ti.peer_id.clone(),
+        downloaded: ti.downloaded,
         interval: 60, uploaded: 0};
       
       let tx_clone: mpsc::Sender<Vec<SocketAddrV4>> = tx.clone();

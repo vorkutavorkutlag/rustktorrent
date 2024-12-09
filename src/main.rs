@@ -1,4 +1,5 @@
-use std::{process, str};
+use std::{process, str, sync::{Arc, Mutex}};
+use structs_enums::TorrentInfo;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -6,6 +7,7 @@ mod bencode;
 mod torrent_reader;
 mod tracker;
 mod peers;
+mod structs_enums;
 
 #[tokio::main]
 async fn main() {
@@ -31,13 +33,22 @@ async fn main() {
         eprintln!("Error parsing torrent: {}", e);
         process::exit(1);}
     };
-  let downloaded: u64 = 0;
+
+  let mut ti: Arc<TorrentInfo> = Arc::new(TorrentInfo {
+    infohash: infohash.clone(),
+    announce_list: announce_list,
+    num_pieces: num_pieces,
+    downloaded: 0,
+    size: size,
+    pieces: pieces,
+    peer_id: session_uuid
+  });
 
   // temporary arbitrary buffer. should research more and see how big communication actually gets
   let (tracker_tx, tracker_rx) = mpsc::channel(6);
-
-  tracker::start_tracker_comm(infohash, announce_list, size, session_uuid, downloaded, tracker_tx).await;
   
-  tokio::spawn(peers::mpsc_p_process(tracker_rx));
+  tracker::start_tracker_comm(Arc::clone(&ti), tracker_tx).await;
+  
+  tokio::spawn(peers::mpsc_p_process(tracker_rx, Arc::clone(&ti)));
     
 }
