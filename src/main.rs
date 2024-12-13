@@ -44,6 +44,8 @@ async fn main() {
     peer_id: session_uuid
   });
 
+  println!("TRACKERS: {:?}", ti.announce_list);
+
   // temporary arbitrary buffer. should research more and see how big communication actually gets
   let (tracker_tx, tracker_rx) = mpsc::channel(6);
   

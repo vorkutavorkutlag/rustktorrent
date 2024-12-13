@@ -1,10 +1,11 @@
 use crate::bencode;
+use std::collections::HashSet;
 use sha1::{Sha1, Digest};
 
 use crate::structs_enums;
 use structs_enums::Bencode;
 
-pub fn parse_torrent(filename: &str) -> Result<(Vec<u8>, Vec<String>, u64, u64, u64, Vec<u8>), String> {
+pub fn parse_torrent(filename: &str) -> Result<(Vec<u8>, HashSet<String>, u64, u64, u64, Vec<u8>), String> {
   // Decode the torrent file into a HashMap
   let torrent = match bencode::read_torrent_file(filename) {
     Ok(bytes) => {
@@ -27,16 +28,16 @@ pub fn parse_torrent(filename: &str) -> Result<(Vec<u8>, Vec<String>, u64, u64, 
   let hashed_info= hash_result.to_vec();
 
     // Get the announce list (single announce and 'announce-list')
-  let mut announce_list = Vec::new();
+  let mut announce_list = HashSet::new();
   if let Some(Bencode::String(announce)) = torrent.get("announce") {
-      announce_list.push(String::from_utf8(announce.clone()).map_err(|_| "Invalid UTF-8 in 'announce'")?);
+      announce_list.insert(String::from_utf8(announce.clone()).map_err(|_| "Invalid UTF-8 in 'announce'")?);
   }
   if let Some(Bencode::List(ann_list)) = torrent.get("announce-list") {
     for entry in ann_list {
       if let Bencode::List(url_list) = entry {
         for url in url_list {
           if let Bencode::String(url_bytes) = url {
-            announce_list.push(String::from_utf8(url_bytes.clone()).map_err(|_| "Invalid UTF-8 in 'announce-list'")?);
+            announce_list.insert(String::from_utf8(url_bytes.clone()).map_err(|_| "Invalid UTF-8 in 'announce-list'")?);
                   }
               }
           }

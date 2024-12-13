@@ -1,9 +1,9 @@
-use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read};
 
 use crate::structs_enums;
 use structs_enums::Bencode;
+use std::collections::HashMap;
 
 
 pub fn encode_bencode(bencode: &Bencode) -> Vec<u8> {

@@ -5,7 +5,7 @@ use tokio::sync::mpsc::Receiver;
 use crate::structs_enums;
 use structs_enums::{TorrentInfo, BittorrentConstants};
 
-async fn do_handshake(t_peer: SocketAddrV4, ti: &'static TorrentInfo) -> Result<TcpStream, Box <dyn Error>> {
+async fn do_handshake(t_peer: SocketAddrV4, ti: Arc<TorrentInfo>) -> Result<TcpStream, Box <dyn Error>> {
   let mut socket = TcpStream::connect(t_peer)?;
   
   let protocol: &[u8] = "Bittorrent Protocol".as_bytes();
@@ -32,6 +32,7 @@ async fn do_handshake(t_peer: SocketAddrV4, ti: &'static TorrentInfo) -> Result<
   }
 
   let mut valid_response: bool = true;
+  println!("{:#?}", response_data);
   valid_response = valid_response && response_data[0..2] == p_len.to_be_bytes();
   valid_response = valid_response && response_data[2..p_len] == *protocol;
   valid_response = valid_response && response_data[p_len..p_len+8] == reserved;
@@ -72,7 +73,7 @@ async fn interested_msg(mut t_peer: &TcpStream, ti: &Arc<TorrentInfo>) -> Result
 }
 
 async fn p_process(t_peer: SocketAddrV4, ti: Arc<TorrentInfo>) {
-  todo!();
+  do_handshake(t_peer, ti).await.expect("Woopsie");
 }
 
 pub async fn mpsc_p_process(mut tracker_rx: Receiver<Vec<SocketAddrV4>>, ti: Arc<TorrentInfo>) {

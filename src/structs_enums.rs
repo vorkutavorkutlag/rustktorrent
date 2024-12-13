@@ -1,9 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub struct TorrentInfo {
   pub infohash: Vec<u8>,
-  pub announce_list: Vec<String>,
+  pub announce_list: HashSet<String>,
   pub num_pieces: u64,
   pub downloaded: u64,
   pub size: u64,

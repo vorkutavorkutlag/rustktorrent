@@ -136,6 +136,7 @@ async fn http_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) ->
         Err(_) => {tokio::time::sleep(Duration::from_secs(tracker.interval)).await; continue},
     };
 
+    println!("Okay...");
     match parse_tracker_response(body, &mut tracker) {
       Ok(peer_addresses) => {println!("Sending peers... interval:{}", tracker.interval); tx.send(peer_addresses).await.unwrap()},
       Err(_) => {tokio::time::sleep(Duration::from_secs(tracker.interval)).await; continue},
@@ -146,12 +147,12 @@ async fn http_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) ->
 }
 
 
-fn udp_connection_request(socket: &mut UdpSocket) -> Option<(i64, u16)> {
+fn udp_connection_request(socket: &mut UdpSocket) -> Option<(i64, i32)> {
   const MAGIC_CONSTANT: i64 = 0x41727101980; // Magic constant for protocol
   const CONNECT_ACTION: i32 = 0; 
   const RESPONSE_LENGTH: usize = 16;
 
-  let transaction_id: u16 = rand::thread_rng().gen_range(0..=65535);
+  let transaction_id: i32 = rand::thread_rng().gen_range(0..=i32::MAX);
   
   let mut packet: Vec<u8> = vec![];
   packet.extend(&MAGIC_CONSTANT.to_be_bytes());
@@ -169,7 +170,7 @@ fn udp_connection_request(socket: &mut UdpSocket) -> Option<(i64, u16)> {
   
   // parse connection response
   let res_action = i32::from_be_bytes(response[0..4].try_into().unwrap());
-  let res_transaction = u16::from_be_bytes(response[4..8].try_into().unwrap());
+  let res_transaction = i32::from_be_bytes(response[4..8].try_into().unwrap());
   let connection_id = i64::from_be_bytes(response[8..16].try_into().unwrap());
   
   // validation
@@ -183,6 +184,8 @@ fn udp_connection_request(socket: &mut UdpSocket) -> Option<(i64, u16)> {
 }
 
 async fn udp_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) -> () {
+  println!("beginning udp work on {}", &tracker.tracker_url);
+  
   let url = match url::Url::parse(&tracker.tracker_url) {
     Ok(url) => url,
     Err(_) => return    // unable to resolve dns - no point in trying more
@@ -207,10 +210,9 @@ async fn udp_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) -> 
     return;
   }
 
-  println!("{:#?}", addrs);
   let mut socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).unwrap();          // bind socket
   socket.connect(&*addrs).unwrap();                                                          // actually connect it to server
-  
+
   // loop until we get a good response
   let (connection_id, transaction_id) = loop {
     if let Some(vals) = udp_connection_request(&mut socket) {
@@ -222,13 +224,12 @@ async fn udp_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) -> 
   
   
   const CONNECT_ACTION: i32 = 1; 
-  const DEFAULT_IP: u8 = 0;
-  const DEFAULT_NUMWANT: i8 = -1;
-  let EVENT: u8 = 2;    // temporary, should be dynamically decided as started, completed, stopped (2, 1, 3)
-
+  const DEFAULT_IP: u32 = 0;
+  const DEFAULT_NUMWANT: i32 = -1;
+  let EVENT: u32 = 2;    // temporary, should be dynamically decided as started, completed, stopped (2, 1, 3)
   loop {
-    let key: u16 = rand::thread_rng().gen_range(0..=65535);
-    let left: u64 = tracker.downloaded - tracker.size;
+    let key: i32 = rand::thread_rng().gen_range(0..=i32::MAX);
+    let left: u64 = tracker.size - tracker.downloaded;
     let mut packet: Vec<u8> = vec![];
     packet.extend(&connection_id.to_be_bytes());
     packet.extend(&CONNECT_ACTION.to_be_bytes());
@@ -244,35 +245,38 @@ async fn udp_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) -> 
     packet.extend(&key.to_be_bytes());
     packet.extend(&DEFAULT_NUMWANT.to_be_bytes());
     packet.extend(&tracker.port.to_be_bytes());
-
+    
     socket.send(&packet).unwrap();
 
     // initial response size is constant, 20 bytes
     let mut response_metadata: Vec<u8> = vec![0u8; 20]; 
     let (size, _) = socket.recv_from(&mut response_metadata).unwrap();
-
+    println!("got hi back {:#?}", response_metadata);
     if size < 20 {
       tokio::time::sleep(Duration::from_secs(tracker.interval)).await;
       continue;
     }
 
     let action = i32::from_be_bytes(response_metadata[0..4].try_into().unwrap());
-    let res_transaction = u16::from_be_bytes(response_metadata[4..8].try_into().unwrap());
-
+    let res_transaction = i32::from_be_bytes(response_metadata[4..8].try_into().unwrap());
+    
     if action != CONNECT_ACTION || res_transaction != transaction_id {
       tokio::time::sleep(Duration::from_secs(tracker.interval)).await;
       continue;
     }
-
-    let interval = u64::from_be_bytes(response_metadata[8..12].try_into().unwrap());
-    let leechers = u32::from_be_bytes(response_metadata[12..16].try_into().unwrap()); 
-    let seeders = u32::from_be_bytes(response_metadata[16..20].try_into().unwrap());  
-
+  
+    let interval = i32::from_be_bytes(response_metadata[8..12].try_into().unwrap());
+    let leechers = i32::from_be_bytes(response_metadata[12..16].try_into().unwrap());
+    let seeders = i32::from_be_bytes(response_metadata[16..20].try_into().unwrap());
+ 
+    println!("going to ask for peers");
 
     // each ip address is composed of 6 bytes. meaning the sum size is the number of all peers times 6
     let peer_data_len: usize= ((leechers + seeders) * 6) as usize;
     let mut response: Vec<u8> = vec![0u8; peer_data_len]; 
     let _ = socket.recv_from(&mut response).unwrap();
+
+    println!("got peers: {:#?}", response);
 
     let mut peers: Vec<SocketAddrV4> = vec![];
     let mut index = 0;
@@ -285,7 +289,7 @@ async fn udp_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) -> 
 
     tx.send(peers).await.unwrap();
     
-    tracker.interval = interval;
+    tracker.interval = interval as u64;
     tokio::time::sleep(Duration::from_secs(tracker.interval)).await;
 
   }
@@ -293,7 +297,7 @@ async fn udp_comm(mut tracker: Tracker, tx: mpsc::Sender<Vec<SocketAddrV4>>) -> 
 
 pub async fn start_tracker_comm(mut ti: Arc<TorrentInfo>, tx: mpsc::Sender<Vec<SocketAddrV4>>) -> () {
     let mut udp_trackers = Vec::new();
-    let mut http_trackers = Vec::new();
+    let mut http_trackers = Vec::new(); 
     
     for tracker_url in &ti.announce_list {
       let parsed_url = match Url::parse(&tracker_url) {
@@ -314,9 +318,9 @@ pub async fn start_tracker_comm(mut ti: Arc<TorrentInfo>, tx: mpsc::Sender<Vec<S
       
       let tx_clone: mpsc::Sender<Vec<SocketAddrV4>> = tx.clone();
       match parsed_url.scheme() {
-        "http" | "https" => http_trackers.push(tokio::spawn(http_comm(tracker, tx_clone))),
-        "udp" => udp_trackers.push(tokio::spawn(udp_comm(tracker, tx_clone))),
-        _ => continue
+        "http" | "https" => {http_trackers.push(tokio::spawn(http_comm(tracker, tx_clone)))},
+        "udp" => {udp_trackers.push(tokio::spawn(udp_comm(tracker, tx_clone)))},
+        _ => {eprintln!("Invalid announce url - Ignoring"); continue;}
       }
   }
 }
